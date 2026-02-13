@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Import auth methods: enable mounts, apply tune/config, create roles/users/groups.
+#
+# Usage:
+#   ./import-auth.sh --config <config.env> [--input-dir <dir>] [--dry-run] [--yes]
+#
+# Reads from:
+#   <input-dir>/auth/
+#     _auth_list.json
+#     <mount-path>/
+#       _mount.json
+#       tune.json
+#       config.json
+#       roles/ | users/ | groups/ | certs/ | ...
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+
+parse_import_args "$@"
+load_config "${CONFIG_FILE}"
+require_tools vault jq
+setup_import_dir
+
+AUTH_DIR="${INPUT_DIR}/auth"
+
+# ── Import a single collection (roles, users, groups, etc.) ─────────────────
+_import_collection() {
+  local auth_path="$1"    # e.g., auth/oidc
+  local collection="$2"   # e.g., roles
+  local col_dir="$3"      # e.g., /path/to/auth/oidc/roles
+
+  [[ -d "$col_dir" ]] || return 0
+
+  local file
+  for file in "${col_dir}"/*.json; do
+    [[ -f "$file" ]] || continue
+    local name
+    name=$(basename "$file" .json)
+    local write_path="${auth_path}/${collection}/${name}"
+
+    # Extract .data from the exported JSON (vault read wraps in .data)
+    local payload
+    payload=$(jq '.data // .' "$file")
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      info "  [DRY-RUN] Would write: ${write_path}"
+      SKIP_COUNT=$((SKIP_COUNT + 1))
+      continue
+    fi
+
+    if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
+      info "  Imported: ${write_path}"
+      IMPORT_COUNT=$((IMPORT_COUNT + 1))
+    else
+      warn "  Failed to write: ${write_path}"
+    fi
+  done
+}
+
+# ── Apply tune settings ─────────────────────────────────────────────────────
+_apply_tune() {
+  local mount_path="$1"   # e.g., oidc/
+  local tune_file="$2"
+
+  [[ -f "$tune_file" ]] || return 0
+
+  # Extract tunable fields from the exported tune JSON
+  local args=()
+  local val
+
+  val=$(jq -r '.data.default_lease_ttl // .default_lease_ttl // empty' "$tune_file" 2>/dev/null)
+  [[ -n "$val" && "$val" != "0" ]] && args+=(default_lease_ttl="$val")
+
+  val=$(jq -r '.data.max_lease_ttl // .max_lease_ttl // empty' "$tune_file" 2>/dev/null)
+  [[ -n "$val" && "$val" != "0" ]] && args+=(max_lease_ttl="$val")
+
+  val=$(jq -r '.data.description // .description // empty' "$tune_file" 2>/dev/null)
+  [[ -n "$val" ]] && args+=(description="$val")
+
+  if [[ ${#args[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    info "  [DRY-RUN] Would tune auth mount: ${mount_path} (${args[*]})"
+    return 0
+  fi
+
+  if vault auth tune "${args[@]}" "${mount_path}" >/dev/null 2>&1; then
+    info "  Applied tune to: ${mount_path}"
+  else
+    warn "  Failed to tune: ${mount_path}"
+  fi
+}
+
+# ── Apply config ─────────────────────────────────────────────────────────────
+_apply_config() {
+  local auth_path="$1"    # e.g., auth/oidc
+  local config_file="$2"
+
+  [[ -f "$config_file" ]] || return 0
+
+  local payload
+  payload=$(jq '.data // .' "$config_file")
+
+  if [[ "${DRY_RUN}" == "true" ]]; then
+    info "  [DRY-RUN] Would write config: ${auth_path}/config"
+    return 0
+  fi
+
+  if echo "$payload" | vault write "${auth_path}/config" - >/dev/null 2>&1; then
+    info "  Applied config to: ${auth_path}/config"
+  else
+    warn "  Failed to write config: ${auth_path}/config"
+  fi
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+main() {
+  if [[ ! -d "$AUTH_DIR" ]]; then
+    warn "Auth export directory not found: ${AUTH_DIR}"
+    exit 1
+  fi
+
+  info "Importing auth methods to: ${VAULT_ADDR}"
+
+  if ! confirm_action "Import auth methods to ${VAULT_ADDR}?"; then
+    info "Aborted by user."
+    exit 0
+  fi
+
+  # Get existing auth mounts to avoid re-enabling
+  local existing_mounts
+  existing_mounts=$(vault auth list -format=json 2>/dev/null | jq -r 'keys[]' || echo "")
+
+  # Iterate over exported mount directories
+  local mount_dir
+  for mount_dir in "${AUTH_DIR}"/*/; do
+    [[ -d "$mount_dir" ]] || continue
+    local mount_name
+    mount_name=$(basename "$mount_dir")
+
+    # Skip underscore-prefixed files (like _auth_list.json directory wouldn't exist, but guard)
+    [[ "$mount_name" == _* ]] && continue
+
+    local mount_path="${mount_name}/"
+    local mount_file="${mount_dir}/_mount.json"
+
+    if [[ ! -f "$mount_file" ]]; then
+      warn "No _mount.json for ${mount_path}, skipping."
+      continue
+    fi
+
+    local auth_type
+    auth_type=$(jq -r '.type' "$mount_file")
+    info "Auth mount: ${mount_path} (type: ${auth_type})"
+
+    # Enable the auth mount if it doesn't already exist
+    if echo "$existing_mounts" | grep -qx "${mount_path}"; then
+      info "  Mount already exists, skipping enable."
+    else
+      if [[ "${DRY_RUN}" == "true" ]]; then
+        info "  [DRY-RUN] Would enable auth: ${auth_type} at ${mount_path}"
+      else
+        if vault auth enable -path="${mount_name}" "${auth_type}" >/dev/null 2>&1; then
+          info "  Enabled auth mount: ${mount_path}"
+          IMPORT_COUNT=$((IMPORT_COUNT + 1))
+        else
+          error "  Failed to enable auth mount: ${mount_path}"
+          continue
+        fi
+      fi
+    fi
+
+    # Apply tune
+    _apply_tune "$mount_path" "${mount_dir}/tune.json"
+
+    # Apply config
+    _apply_config "auth/${mount_name}" "${mount_dir}/config.json"
+
+    # Apply client config (AWS/GCP/Azure)
+    if [[ -f "${mount_dir}/config_client.json" ]]; then
+      local payload
+      payload=$(jq '.data // .' "${mount_dir}/config_client.json")
+      if [[ "${DRY_RUN}" == "true" ]]; then
+        info "  [DRY-RUN] Would write: auth/${mount_name}/config/client"
+      else
+        echo "$payload" | vault write "auth/${mount_name}/config/client" - >/dev/null 2>&1 \
+          || warn "  Failed to write config/client for ${mount_path}"
+      fi
+    fi
+
+    # Import collections (roles, users, groups, certs, teams, providers, keys)
+    for collection in roles role users groups certs teams providers keys; do
+      _import_collection "auth/${mount_name}" "$collection" "${mount_dir}/${collection}"
+    done
+
+    # LDAP legacy map/* collections
+    for collection in users groups roles; do
+      if [[ -d "${mount_dir}/map/${collection}" ]]; then
+        _import_collection "auth/${mount_name}/map" "$collection" "${mount_dir}/map/${collection}"
+      fi
+    done
+
+  done
+
+  print_summary "Auth import"
+}
+
+main

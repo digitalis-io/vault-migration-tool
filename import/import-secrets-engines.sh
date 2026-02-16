@@ -80,17 +80,18 @@ _apply_tune() {
 
   [[ -f "$tune_file" ]] || return 0
 
+  # vault secrets tune uses -flag=value syntax with dashes
   local args=()
   local val
 
   val=$(jq -r '.data.default_lease_ttl // .default_lease_ttl // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" && "$val" != "0" ]] && args+=(default_lease_ttl="$val")
+  [[ -n "$val" && "$val" != "0" ]] && args+=("-default-lease-ttl=${val}")
 
   val=$(jq -r '.data.max_lease_ttl // .max_lease_ttl // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" && "$val" != "0" ]] && args+=(max_lease_ttl="$val")
+  [[ -n "$val" && "$val" != "0" ]] && args+=("-max-lease-ttl=${val}")
 
   val=$(jq -r '.data.description // .description // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" ]] && args+=(description="$val")
+  [[ -n "$val" ]] && args+=("-description=${val}")
 
   if [[ ${#args[@]} -eq 0 ]]; then
     return 0

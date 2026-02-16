@@ -30,6 +30,7 @@ _import_collection() {
   local auth_path="$1"    # e.g., auth/oidc
   local collection="$2"   # e.g., roles
   local col_dir="$3"      # e.g., /path/to/auth/oidc/roles
+  local auth_type="${4:-}"  # optional: auth method type (e.g., userpass)
 
   [[ -d "$col_dir" ]] || return 0
 
@@ -44,6 +45,13 @@ _import_collection() {
     local payload
     payload=$(jq '.data // .' "$file")
 
+    # Special handling for userpass users: Vault requires a password when creating
+    # users, but passwords are not exported (Vault never exposes them).
+    # We set a temporary password and warn the user to reset it.
+    if [[ "$auth_type" == "userpass" && "$collection" == "users" ]]; then
+      payload=$(echo "$payload" | jq '. + {password: "TEMPORARY-CHANGE-ME"}')
+    fi
+
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write: ${write_path}"
       SKIP_COUNT=$((SKIP_COUNT + 1))
@@ -53,6 +61,10 @@ _import_collection() {
     if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
+      # Warn about temporary password for userpass users
+      if [[ "$auth_type" == "userpass" && "$collection" == "users" ]]; then
+        warn "  User '${name}' imported with temporary password - MUST be reset!"
+      fi
     else
       warn "  Failed to write: ${write_path}"
     fi
@@ -67,17 +79,18 @@ _apply_tune() {
   [[ -f "$tune_file" ]] || return 0
 
   # Extract tunable fields from the exported tune JSON
+  # vault auth tune uses -flag=value syntax with dashes
   local args=()
   local val
 
   val=$(jq -r '.data.default_lease_ttl // .default_lease_ttl // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" && "$val" != "0" ]] && args+=(default_lease_ttl="$val")
+  [[ -n "$val" && "$val" != "0" ]] && args+=("-default-lease-ttl=${val}")
 
   val=$(jq -r '.data.max_lease_ttl // .max_lease_ttl // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" && "$val" != "0" ]] && args+=(max_lease_ttl="$val")
+  [[ -n "$val" && "$val" != "0" ]] && args+=("-max-lease-ttl=${val}")
 
   val=$(jq -r '.data.description // .description // empty' "$tune_file" 2>/dev/null)
-  [[ -n "$val" ]] && args+=(description="$val")
+  [[ -n "$val" ]] && args+=("-description=${val}")
 
   if [[ ${#args[@]} -eq 0 ]]; then
     return 0
@@ -194,13 +207,13 @@ main() {
 
     # Import collections (roles, users, groups, certs, teams, providers, keys)
     for collection in roles role users groups certs teams providers keys; do
-      _import_collection "auth/${mount_name}" "$collection" "${mount_dir}/${collection}"
+      _import_collection "auth/${mount_name}" "$collection" "${mount_dir}/${collection}" "$auth_type"
     done
 
     # LDAP legacy map/* collections
     for collection in users groups roles; do
       if [[ -d "${mount_dir}/map/${collection}" ]]; then
-        _import_collection "auth/${mount_name}/map" "$collection" "${mount_dir}/map/${collection}"
+        _import_collection "auth/${mount_name}/map" "$collection" "${mount_dir}/map/${collection}" "$auth_type"
       fi
     done
 

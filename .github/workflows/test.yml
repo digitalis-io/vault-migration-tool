@@ -1,0 +1,225 @@
+name: Test Migration Scripts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          # Install Vault
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update && sudo apt-get install -y vault jq
+
+          # Install medusa
+          MEDUSA_VERSION="0.9.4"
+          curl -fsSL "https://github.com/jonasvinther/medusa/releases/download/v${MEDUSA_VERSION}/medusa_${MEDUSA_VERSION}_linux_amd64.tar.gz" -o medusa.tar.gz
+          tar -xzf medusa.tar.gz
+          sudo mv medusa /usr/local/bin/
+          rm medusa.tar.gz
+
+          # Verify installations
+          vault version
+          jq --version
+          medusa version
+
+      - name: Make scripts executable
+        run: chmod +x export/*.sh import/*.sh lib/common.sh
+
+      - name: Start Vault (source cluster)
+        run: |
+          vault server -dev -dev-root-token-id="root" -dev-listen-address="127.0.0.1:8200" &
+          sleep 3
+
+          # Verify Vault is running
+          export VAULT_ADDR="http://127.0.0.1:8200"
+          export VAULT_TOKEN="root"
+          vault status
+
+      - name: Create test data (100 policies, roles, secrets)
+        run: |
+          export VAULT_ADDR="http://127.0.0.1:8200"
+          export VAULT_TOKEN="root"
+
+          echo "Creating 100 policies..."
+          for i in $(seq 1 100); do
+            vault policy write "test-policy-${i}" - <<EOF
+          path "secret/data/app-${i}/*" {
+            capabilities = ["create", "read", "update", "delete", "list"]
+          }
+          path "secret/metadata/app-${i}/*" {
+            capabilities = ["list", "read", "delete"]
+          }
+          EOF
+          done
+
+          echo "Enabling auth methods..."
+          vault auth enable -path=approle-test approle
+          vault auth enable -path=userpass-test userpass
+
+          echo "Creating 100 AppRole roles..."
+          for i in $(seq 1 100); do
+            vault write "auth/approle-test/role/app-role-${i}" \
+              token_policies="test-policy-${i}" \
+              token_ttl=1h \
+              token_max_ttl=4h \
+              secret_id_ttl=10m
+          done
+
+          echo "Creating 100 userpass users..."
+          for i in $(seq 1 100); do
+            vault write "auth/userpass-test/users/user-${i}" \
+              password="password-${i}" \
+              policies="test-policy-${i}"
+          done
+
+          echo "Enabling KV secrets engine..."
+          vault secrets enable -path=kv-test -version=2 kv
+
+          echo "Creating 100 secrets..."
+          for i in $(seq 1 100); do
+            vault kv put "kv-test/app-${i}/config" \
+              api_key="key-${i}-$(openssl rand -hex 16)" \
+              db_password="db-pass-${i}-$(openssl rand -hex 8)" \
+              environment="test"
+          done
+
+          echo "Verifying test data..."
+          echo "Policies: $(vault policy list | wc -l)"
+          echo "AppRole roles: $(vault list auth/approle-test/role | wc -l)"
+          echo "Userpass users: $(vault list auth/userpass-test/users | wc -l)"
+          echo "KV secrets: $(vault kv list kv-test | wc -l)"
+
+      - name: Create source config
+        run: |
+          cat > config/source.env <<EOF
+          VAULT_ADDR="http://127.0.0.1:8200"
+          VAULT_TOKEN="root"
+          CLUSTER_NAME="test-source"
+          VAULT_SKIP_VERIFY="false"
+          MEDUSA_INSECURE="true"
+          EOF
+
+      - name: Run export
+        run: |
+          ./export/export-all.sh --config config/source.env
+
+          echo "Export complete. Checking exported data..."
+          ls -la data/test-source/
+          echo "Policies exported: $(ls data/test-source/policies/acl/ | wc -l)"
+          echo "Auth mounts exported: $(ls -d data/test-source/auth/*/ 2>/dev/null | wc -l)"
+
+      - name: Stop Vault (source cluster)
+        run: |
+          pkill -f "vault server" || true
+          sleep 2
+
+      - name: Start Vault (destination cluster - empty)
+        run: |
+          vault server -dev -dev-root-token-id="root" -dev-listen-address="127.0.0.1:8200" &
+          sleep 3
+
+          # Verify Vault is running and empty
+          export VAULT_ADDR="http://127.0.0.1:8200"
+          export VAULT_TOKEN="root"
+          vault status
+
+          echo "Destination Vault policies (should be minimal):"
+          vault policy list
+
+      - name: Create destination config
+        run: |
+          cat > config/destination.env <<EOF
+          VAULT_ADDR="http://127.0.0.1:8200"
+          VAULT_TOKEN="root"
+          CLUSTER_NAME="test-source"
+          VAULT_SKIP_VERIFY="false"
+          MEDUSA_INSECURE="true"
+          EOF
+
+      - name: Run import
+        run: |
+          ./import/import-all.sh --config config/destination.env --input-dir data/test-source --yes
+
+      - name: Verify import
+        run: |
+          export VAULT_ADDR="http://127.0.0.1:8200"
+          export VAULT_TOKEN="root"
+
+          echo "Verifying imported data..."
+
+          # Count policies (subtract default/root)
+          POLICY_COUNT=$(vault policy list | grep -c "test-policy" || true)
+          echo "Imported policies: ${POLICY_COUNT}"
+
+          # Check auth methods
+          echo "Auth methods:"
+          vault auth list
+
+          # Check roles
+          if vault list auth/approle-test/role &>/dev/null; then
+            ROLE_COUNT=$(vault list -format=json auth/approle-test/role | jq 'length')
+            echo "Imported AppRole roles: ${ROLE_COUNT}"
+          else
+            echo "AppRole auth method not found!"
+            exit 1
+          fi
+
+          # Check users
+          if vault list auth/userpass-test/users &>/dev/null; then
+            USER_COUNT=$(vault list -format=json auth/userpass-test/users | jq 'length')
+            echo "Imported userpass users: ${USER_COUNT}"
+          else
+            echo "Userpass auth method not found!"
+            exit 1
+          fi
+
+          # Check secrets
+          if vault kv list kv-test &>/dev/null; then
+            SECRET_COUNT=$(vault kv list -format=json kv-test | jq 'length')
+            echo "Imported KV secrets: ${SECRET_COUNT}"
+          else
+            echo "KV secrets engine not found!"
+            exit 1
+          fi
+
+          # Validate counts
+          if [[ "${POLICY_COUNT}" -lt 100 ]]; then
+            echo "ERROR: Expected 100 policies, got ${POLICY_COUNT}"
+            exit 1
+          fi
+
+          if [[ "${ROLE_COUNT}" -lt 100 ]]; then
+            echo "ERROR: Expected 100 roles, got ${ROLE_COUNT}"
+            exit 1
+          fi
+
+          if [[ "${USER_COUNT}" -lt 100 ]]; then
+            echo "ERROR: Expected 100 users, got ${USER_COUNT}"
+            exit 1
+          fi
+
+          if [[ "${SECRET_COUNT}" -lt 100 ]]; then
+            echo "ERROR: Expected 100 secrets, got ${SECRET_COUNT}"
+            exit 1
+          fi
+
+          echo "All validations passed!"
+
+      - name: Upload export data on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-data
+          path: data/
+          retention-days: 7

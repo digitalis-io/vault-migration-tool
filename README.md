@@ -279,6 +279,18 @@ chmod +x export/*.sh import/*.sh lib/common.sh
 
 ---
 
+## Support
+
+- **Community support** — Open a [GitHub Issue](../../issues) for bug reports, feature requests, and questions
+- **Professional support** — Contact [Digitalis.io](https://digitalis.io/contact) for commercial support, consulting, and managed services
+
+## About Digitalis.io
+
+This repository is maintained by [Digitalis.io](https://digitalis.io/), a cloud-native consultancy specialising in open-source infrastructure, platform engineering, and DevOps. We help organisations design, build, and operate secure, scalable systems using tools like OpenBao, Kubernetes, and Terraform.
+
+- **Website:** [digitalis.io](https://digitalis.io/)
+- **GitHub:** [github.com/digitalis-io](https://github.com/digitalis-io)
+
 ## License
 
 See [LICENSE](LICENSE) for details.

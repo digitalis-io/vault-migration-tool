@@ -1,6 +1,9 @@
 # Export data directory (contains secrets)
 data/
 
+# Project instructions (local only)
+CLAUDE.md
+
 # Real config files (contain tokens/credentials)
 config/*.env
 !config/*.env.example

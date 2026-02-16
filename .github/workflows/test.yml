@@ -22,7 +22,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y vault jq
 
           # Install medusa
-          MEDUSA_VERSION="0.9.4"
+          MEDUSA_VERSION="0.7.3"
           curl -fsSL "https://github.com/jonasvinther/medusa/releases/download/v${MEDUSA_VERSION}/medusa_${MEDUSA_VERSION}_linux_amd64.tar.gz" -o medusa.tar.gz
           tar -xzf medusa.tar.gz
           sudo mv medusa /usr/local/bin/

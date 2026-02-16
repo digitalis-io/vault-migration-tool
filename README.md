@@ -255,6 +255,51 @@ System mounts (`sys/`, `identity/`, `cubbyhole/`) are automatically skipped.
 
 ---
 
+## Limitations
+
+This tool exports and imports Vault **configuration** and **static secrets**. Some data cannot be migrated due to Vault's security model:
+
+### Credentials That Cannot Be Exported
+
+**Userpass passwords** — Vault never exposes passwords. Users are imported with a temporary password (`TEMPORARY-CHANGE-ME`) and must reset it after migration.
+
+**AppRole secret IDs** — Secret IDs are one-time or ephemeral. Applications must generate new secret IDs after migration.
+
+**Token secrets** — Tokens are tied to the issuing cluster. Clients must re-authenticate after migration.
+
+**TLS certificate private keys** — Private keys are not readable. Re-upload certificates with private keys after migration.
+
+### Dynamic Secrets and Leases
+
+- **Active leases** do not transfer — any checked-out dynamic credentials (database passwords, AWS keys, etc.) remain on the source cluster
+- **Lease IDs** are cluster-specific and will not be valid on the destination
+- Applications using dynamic secrets should be restarted after migration to obtain new credentials
+
+### Identity (Entities and Groups)
+
+- **Identity entities and groups** (`identity/` mount) are not currently exported
+- Entity aliases linked to auth methods will need to be recreated manually or via Terraform
+
+### Enterprise Features
+
+- **Sentinel policies (EGP/RGP)** are exported but require Vault Enterprise on the destination
+- **Namespaces** — each namespace must be exported/imported separately; cross-namespace references may need adjustment
+- **Replication** — this tool is not a replacement for Vault's native replication; use it for one-time migrations, not ongoing sync
+
+### Token and Accessor Changes
+
+- **Auth mount accessors** change when mounts are recreated on the destination
+- Policies or configurations referencing specific accessors will need to be updated
+- **Token roles** that reference accessor IDs must be manually adjusted
+
+### Other Considerations
+
+- **Audit device paths** — file paths or syslog endpoints must exist/be reachable on the destination system
+- **Plugin backends** — custom plugin binaries must be installed on the destination before import
+- **Seal configuration** — auto-unseal or HSM configurations are cluster-specific and not migrated
+
+---
+
 ## Troubleshooting
 
 **"Missing required tools" error**

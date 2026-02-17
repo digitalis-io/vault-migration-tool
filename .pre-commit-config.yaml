@@ -1,0 +1,51 @@
+# Your existing hooks
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.1.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      # Useful for scripts (optional but handy)
+      - id: check-executables-have-shebangs
+        files: ^(scripts/|bin/|.*\.sh$)
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.30.0
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint]
+        exclude: ^cloudformation/.*
+
+  # ShellCheck: static analysis for shell scripts
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1       # pick a recent tag; update as needed
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        # Restrict to your script locations/patterns
+        files: ^(scripts/|bin/|.*\.(sh|bash)$)
+        # Example: ignore specific rules or set shell dialect
+        args: ["--exclude=SC1091,SC2153", "--shell=bash"]
+
+  # shfmt: auto-formatter for bash/sh
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.7.0-4        # match your desired shfmt version
+    hooks:
+      - id: shfmt
+        name: shfmt
+        files: ^(scripts/|bin/|.*\.(sh|bash)$)
+        # Common options:
+        # -i: indent, -ci: switch-case indent, -sr: simplify redirects, -kp: keep column alignment
+        args: ["-i", "2", "-ci", "-sr"]
+
+  # (Optional) bashate: style checks commonly used in OpenStack scripts
+  - repo: https://github.com/openstack/bashate
+    rev: 2.1.1
+    hooks:
+      - id: bashate
+        name: bashate
+        files: ^(scripts/|bin/|.*\.(sh|bash)$)
+        args: ["--ignore=E006,E042,E003"]

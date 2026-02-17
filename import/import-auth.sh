@@ -23,7 +23,9 @@ load_config "${CONFIG_FILE}"
 require_tools vault jq
 setup_import_dir
 
+setup_error_log
 AUTH_DIR="${INPUT_DIR}/auth"
+USERPASS_TEMP_PASSWORD="${USERPASS_TEMP_PASSWORD:-TEMPORARY-CHANGE-ME}"
 
 # ── Import a single collection (roles, users, groups, etc.) ─────────────────
 _import_collection() {
@@ -49,7 +51,7 @@ _import_collection() {
     # users, but passwords are not exported (Vault never exposes them).
     # We set a temporary password and warn the user to reset it.
     if [[ "$auth_type" == "userpass" && "$collection" == "users" ]]; then
-      payload=$(echo "$payload" | jq '. + {password: "TEMPORARY-CHANGE-ME"}')
+      payload=$(echo "$payload" | jq --arg pw "$USERPASS_TEMP_PASSWORD" '. + {password: $pw}')
     fi
 
     # AppRole roles: strip read-only fields that Vault rejects on write.
@@ -59,13 +61,21 @@ _import_collection() {
       payload=$(echo "$payload" | jq 'del(.local_secret_ids)')
     fi
 
+    # Kubernetes roles: strip alias_name_source if empty/invalid.
+    # Vault exports this field with an empty string but rejects it on write
+    # (must be "serviceaccount_uid" or "serviceaccount_name").
+    if [[ "$auth_type" == "kubernetes" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq 'if .alias_name_source == "" or .alias_name_source == null then del(.alias_name_source) else . end')
+    fi
+
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write: ${write_path}"
       SKIP_COUNT=$((SKIP_COUNT + 1))
       continue
     fi
 
-    if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
       # Warn about temporary password for userpass users
@@ -74,6 +84,7 @@ _import_collection() {
       fi
     else
       warn "  Failed to write: ${write_path}"
+      log_error "${write_path}" "${vault_err}"
     fi
   done
 }
@@ -105,10 +116,12 @@ _restore_approle_role_ids() {
       continue
     fi
 
-    if vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" 2>&1 >/dev/null); then
       info "  Restored role_id for AppRole role: ${role_name}"
     else
       warn "  Failed to restore role_id for: ${role_name}"
+      log_error "${auth_path}/role/${role_name}/role-id" "${vault_err}"
     fi
   done
 }
@@ -143,10 +156,12 @@ _apply_tune() {
     return 0
   fi
 
-  if vault auth tune "${args[@]}" "${mount_path}" >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(vault auth tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
     info "  Applied tune to: ${mount_path}"
   else
     warn "  Failed to tune: ${mount_path}"
+    log_error "auth tune ${mount_path}" "${vault_err}"
   fi
 }
 
@@ -165,10 +180,12 @@ _apply_config() {
     return 0
   fi
 
-  if echo "$payload" | vault write "${auth_path}/config" - >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(echo "$payload" | vault write "${auth_path}/config" - 2>&1 >/dev/null); then
     info "  Applied config to: ${auth_path}/config"
   else
     warn "  Failed to write config: ${auth_path}/config"
+    log_error "${auth_path}/config" "${vault_err}"
   fi
 }
 
@@ -219,11 +236,13 @@ main() {
       if [[ "${DRY_RUN}" == "true" ]]; then
         info "  [DRY-RUN] Would enable auth: ${auth_type} at ${mount_path}"
       else
-        if vault auth enable -path="${mount_name}" "${auth_type}" >/dev/null 2>&1; then
+        local vault_err
+        if vault_err=$(vault auth enable -path="${mount_name}" "${auth_type}" 2>&1 >/dev/null); then
           info "  Enabled auth mount: ${mount_path}"
           IMPORT_COUNT=$((IMPORT_COUNT + 1))
         else
           error "  Failed to enable auth mount: ${mount_path}"
+          log_error "auth enable ${mount_path}" "${vault_err}"
           continue
         fi
       fi
@@ -242,8 +261,11 @@ main() {
       if [[ "${DRY_RUN}" == "true" ]]; then
         info "  [DRY-RUN] Would write: auth/${mount_name}/config/client"
       else
-        echo "$payload" | vault write "auth/${mount_name}/config/client" - >/dev/null 2>&1 \
-          || warn "  Failed to write config/client for ${mount_path}"
+        local vault_err
+        if ! vault_err=$(echo "$payload" | vault write "auth/${mount_name}/config/client" - 2>&1 >/dev/null); then
+          warn "  Failed to write config/client for ${mount_path}"
+          log_error "auth/${mount_name}/config/client" "${vault_err}"
+        fi
       fi
     fi
 

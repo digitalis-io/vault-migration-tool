@@ -28,6 +28,7 @@ EXPORT_COUNT=0
 IMPORT_COUNT=0
 SKIP_COUNT=0
 WARN_COUNT=0
+ERROR_LOG=""
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 _ts() { date +%H:%M:%S; }
@@ -36,6 +37,31 @@ info()    { echo -e "\033[1;34m[i]\033[0m $(_ts) $*"; }
 warn()    { echo -e "\033[1;33m[!]\033[0m $(_ts) $*"; WARN_COUNT=$((WARN_COUNT + 1)); }
 error()   { echo -e "\033[1;31m[x]\033[0m $(_ts) $*" >&2; }
 success() { echo -e "\033[1;32m[+]\033[0m $(_ts) $*"; }
+
+# ── Error log ─────────────────────────────────────────────────────────────────
+# Initialise an error log file under INPUT_DIR. Call after setup_import_dir.
+setup_error_log() {
+  ERROR_LOG="${INPUT_DIR}/import-errors.log"
+  : > "$ERROR_LOG"   # truncate / create
+}
+
+# Append an error entry to the log file.
+# Usage: log_error "resource path" "vault error message"
+log_error() {
+  local resource="$1"
+  local message="$2"
+  [[ -z "$ERROR_LOG" ]] && return 0
+  printf "[%s] FAILED %s — %s\n" "$(date +%H:%M:%S)" "$resource" "$message" >> "$ERROR_LOG"
+}
+
+# Print error log location in the summary if there were errors.
+_print_error_log_summary() {
+  if [[ -n "$ERROR_LOG" && -s "$ERROR_LOG" ]]; then
+    local count
+    count=$(wc -l < "$ERROR_LOG" | tr -d ' ')
+    warn "  Errors:            ${count} (see ${ERROR_LOG})"
+  fi
+}
 
 # ── Tool checks ──────────────────────────────────────────────────────────────
 require_tools() {
@@ -285,6 +311,7 @@ print_summary() {
   if [[ "${WARN_COUNT:-0}" -gt 0 ]]; then
     warn "  Warnings:          ${WARN_COUNT}"
   fi
+  _print_error_log_summary
   if [[ "${DRY_RUN}" == "true" ]]; then
     warn "  (DRY RUN — no changes were made)"
   fi

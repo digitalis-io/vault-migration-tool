@@ -52,6 +52,13 @@ _import_collection() {
       payload=$(echo "$payload" | jq '. + {password: "TEMPORARY-CHANGE-ME"}')
     fi
 
+    # AppRole roles: strip read-only fields that Vault rejects on write.
+    # local_secret_ids can only be set at role creation time and is not
+    # accepted as a parameter on the write endpoint.
+    if [[ "$auth_type" == "approle" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq 'del(.local_secret_ids)')
+    fi
+
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write: ${write_path}"
       SKIP_COUNT=$((SKIP_COUNT + 1))

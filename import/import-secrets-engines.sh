@@ -66,7 +66,7 @@ _import_collection() {
     fi
 
     local vault_err
-    if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
+    if vault_err=$(echo "$payload" | vault_retry vault write "${write_path}" - 2>&1 >/dev/null); then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
@@ -106,7 +106,7 @@ _apply_tune() {
   fi
 
   local vault_err
-  if vault_err=$(vault secrets tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
+  if vault_err=$(vault_retry vault secrets tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
     info "  Applied tune to: ${mount_path}"
   else
     warn "  Failed to tune: ${mount_path}"
@@ -130,7 +130,7 @@ _apply_config_file() {
   fi
 
   local vault_err
-  if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
+  if vault_err=$(echo "$payload" | vault_retry vault write "${write_path}" - 2>&1 >/dev/null); then
     info "  Applied config: ${write_path}"
   else
     warn "  Failed to write config: ${write_path}"
@@ -199,7 +199,7 @@ main() {
         fi
 
         local vault_err
-        if vault_err=$(vault secrets enable "${enable_args[@]}" "${engine_type}" 2>&1 >/dev/null); then
+        if vault_err=$(vault_retry vault secrets enable "${enable_args[@]}" "${engine_type}" 2>&1 >/dev/null); then
           info "  Enabled secrets engine: ${mount_path}"
           IMPORT_COUNT=$((IMPORT_COUNT + 1))
         else

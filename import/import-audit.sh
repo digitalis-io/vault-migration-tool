@@ -82,7 +82,7 @@ main() {
     done
 
     local vault_err
-    if vault_err=$(vault audit enable "${enable_args[@]}" 2>&1 >/dev/null); then
+    if vault_err=$(vault_retry vault audit enable "${enable_args[@]}" 2>&1 >/dev/null); then
       info "  Enabled audit device: ${clean} (type: ${device_type})"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else

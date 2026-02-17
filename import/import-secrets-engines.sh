@@ -213,12 +213,20 @@ main() {
     # Apply tune
     _apply_tune "$mount_path" "${mount_dir}/tune.json"
 
-    # Apply config files
+    # Apply config files — generic config for all engines
     _apply_config_file "${mount_name}/config" "${mount_dir}/config.json"
-    _apply_config_file "${mount_name}/config/urls" "${mount_dir}/config_urls.json"
-    _apply_config_file "${mount_name}/config/crl" "${mount_dir}/config_crl.json"
-    _apply_config_file "${mount_name}/config/root" "${mount_dir}/config_root.json"
-    _apply_config_file "${mount_name}/config/lease" "${mount_dir}/config_lease.json"
+
+    # Engine-specific config endpoints
+    case "$engine_type" in
+      pki)
+        _apply_config_file "${mount_name}/config/urls" "${mount_dir}/config_urls.json"
+        _apply_config_file "${mount_name}/config/crl" "${mount_dir}/config_crl.json"
+        ;;
+      aws|gcp)
+        _apply_config_file "${mount_name}/config/root" "${mount_dir}/config_root.json"
+        _apply_config_file "${mount_name}/config/lease" "${mount_dir}/config_lease.json"
+        ;;
+    esac
 
     # Import collections
     for collection in roles keys issuers static-roles; do

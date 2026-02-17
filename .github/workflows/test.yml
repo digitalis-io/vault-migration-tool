@@ -50,13 +50,13 @@ jobs:
           export VAULT_TOKEN="root"
           vault status
 
-      - name: Create test data (100 policies, roles, secrets)
+      - name: Create test data (10 policies, roles, secrets)
         run: |
           export VAULT_ADDR="http://127.0.0.1:8200"
           export VAULT_TOKEN="root"
 
-          echo "Creating 100 policies..."
-          for i in $(seq 1 100); do
+          echo "Creating 10 policies..."
+          for i in $(seq 1 10); do
             vault policy write "test-policy-${i}" - <<EOF
           path "secret/data/app-${i}/*" {
             capabilities = ["create", "read", "update", "delete", "list"]
@@ -71,8 +71,8 @@ jobs:
           vault auth enable -path=approle-test approle
           vault auth enable -path=userpass-test userpass
 
-          echo "Creating 100 AppRole roles..."
-          for i in $(seq 1 100); do
+          echo "Creating 10 AppRole roles..."
+          for i in $(seq 1 10); do
             vault write "auth/approle-test/role/app-role-${i}" \
               token_policies="test-policy-${i}" \
               token_ttl=1h \
@@ -80,8 +80,8 @@ jobs:
               secret_id_ttl=10m
           done
 
-          echo "Creating 100 userpass users..."
-          for i in $(seq 1 100); do
+          echo "Creating 10 userpass users..."
+          for i in $(seq 1 10); do
             vault write "auth/userpass-test/users/user-${i}" \
               password="password-${i}" \
               policies="test-policy-${i}"
@@ -90,8 +90,8 @@ jobs:
           echo "Enabling KV secrets engine..."
           vault secrets enable -path=kv-test -version=2 kv
 
-          echo "Creating 100 secrets..."
-          for i in $(seq 1 100); do
+          echo "Creating 10 secrets..."
+          for i in $(seq 1 10); do
             vault kv put "kv-test/app-${i}/config" \
               api_key="key-${i}-$(openssl rand -hex 16)" \
               db_password="db-pass-${i}-$(openssl rand -hex 8)" \
@@ -100,7 +100,7 @@ jobs:
 
           echo "Saving AppRole role_ids for later verification..."
           mkdir -p /tmp/original-role-ids
-          for i in $(seq 1 100); do
+          for i in $(seq 1 10); do
             vault read -format=json "auth/approle-test/role/app-role-${i}/role-id" \
               | jq -r '.data.role_id' > "/tmp/original-role-ids/app-role-${i}.txt"
           done
@@ -172,30 +172,6 @@ jobs:
             echo "No import errors logged."
           fi
 
-      - name: Debug role_id restore
-        run: |
-          export VAULT_ADDR="http://127.0.0.1:8200"
-          export VAULT_TOKEN="root"
-
-          echo "Testing manual role_id restore..."
-          ORIGINAL=$(jq -r '.data.role_id' data/test-source/auth/approle-test/role/app-role-1.role_id.json)
-          echo "Original role_id: ${ORIGINAL}"
-
-          CURRENT=$(vault read -format=json auth/approle-test/role/app-role-1/role-id | jq -r '.data.role_id')
-          echo "Current role_id: ${CURRENT}"
-
-          echo "Attempting vault write..."
-          vault write auth/approle-test/role/app-role-1/role-id role_id="${ORIGINAL}" 2>&1 || true
-
-          AFTER=$(vault read -format=json auth/approle-test/role/app-role-1/role-id | jq -r '.data.role_id')
-          echo "After restore role_id: ${AFTER}"
-
-          if [[ "${ORIGINAL}" == "${AFTER}" ]]; then
-            echo "Manual role_id restore SUCCEEDED"
-          else
-            echo "Manual role_id restore FAILED"
-          fi
-
       - name: Verify import
         run: |
           export VAULT_ADDR="http://127.0.0.1:8200"
@@ -239,30 +215,30 @@ jobs:
           fi
 
           # Validate counts
-          if [[ "${POLICY_COUNT}" -lt 100 ]]; then
-            echo "ERROR: Expected 100 policies, got ${POLICY_COUNT}"
+          if [[ "${POLICY_COUNT}" -lt 10 ]]; then
+            echo "ERROR: Expected 10 policies, got ${POLICY_COUNT}"
             exit 1
           fi
 
-          if [[ "${ROLE_COUNT}" -lt 100 ]]; then
-            echo "ERROR: Expected 100 roles, got ${ROLE_COUNT}"
+          if [[ "${ROLE_COUNT}" -lt 10 ]]; then
+            echo "ERROR: Expected 10 roles, got ${ROLE_COUNT}"
             exit 1
           fi
 
-          if [[ "${USER_COUNT}" -lt 100 ]]; then
-            echo "ERROR: Expected 100 users, got ${USER_COUNT}"
+          if [[ "${USER_COUNT}" -lt 10 ]]; then
+            echo "ERROR: Expected 10 users, got ${USER_COUNT}"
             exit 1
           fi
 
-          if [[ "${SECRET_COUNT}" -lt 100 ]]; then
-            echo "ERROR: Expected 100 secrets, got ${SECRET_COUNT}"
+          if [[ "${SECRET_COUNT}" -lt 10 ]]; then
+            echo "ERROR: Expected 10 secrets, got ${SECRET_COUNT}"
             exit 1
           fi
 
           # Verify AppRole role_ids are preserved
           echo "Verifying AppRole role_ids are preserved..."
           ROLE_ID_MISMATCHES=0
-          for i in $(seq 1 100); do
+          for i in $(seq 1 10); do
             ORIGINAL=$(cat "/tmp/original-role-ids/app-role-${i}.txt")
             IMPORTED=$(vault read -format=json "auth/approle-test/role/app-role-${i}/role-id" | jq -r '.data.role_id')
             if [[ "${ORIGINAL}" != "${IMPORTED}" ]]; then

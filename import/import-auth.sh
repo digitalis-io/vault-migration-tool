@@ -39,6 +39,8 @@ _import_collection() {
   local file
   for file in "${col_dir}"/*.json; do
     [[ -f "$file" ]] || continue
+    # Skip role_id sidecar files (handled by _restore_approle_role_ids)
+    [[ "$file" == *.role_id.json ]] && continue
     local name
     name=$(basename "$file" .json)
     local write_path="${auth_path}/${collection}/${name}"

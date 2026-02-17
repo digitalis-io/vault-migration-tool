@@ -162,6 +162,40 @@ jobs:
         run: |
           ./import/import-all.sh --config config/destination.env --input-dir data/test-source --yes
 
+      - name: Show import error log
+        if: always()
+        run: |
+          if [[ -s data/test-source/import-errors.log ]]; then
+            echo "=== Import Errors ==="
+            cat data/test-source/import-errors.log
+          else
+            echo "No import errors logged."
+          fi
+
+      - name: Debug role_id restore
+        run: |
+          export VAULT_ADDR="http://127.0.0.1:8200"
+          export VAULT_TOKEN="root"
+
+          echo "Testing manual role_id restore..."
+          ORIGINAL=$(jq -r '.data.role_id' data/test-source/auth/approle-test/role/app-role-1.role_id.json)
+          echo "Original role_id: ${ORIGINAL}"
+
+          CURRENT=$(vault read -format=json auth/approle-test/role/app-role-1/role-id | jq -r '.data.role_id')
+          echo "Current role_id: ${CURRENT}"
+
+          echo "Attempting vault write..."
+          vault write auth/approle-test/role/app-role-1/role-id role_id="${ORIGINAL}" 2>&1 || true
+
+          AFTER=$(vault read -format=json auth/approle-test/role/app-role-1/role-id | jq -r '.data.role_id')
+          echo "After restore role_id: ${AFTER}"
+
+          if [[ "${ORIGINAL}" == "${AFTER}" ]]; then
+            echo "Manual role_id restore SUCCEEDED"
+          else
+            echo "Manual role_id restore FAILED"
+          fi
+
       - name: Verify import
         run: |
           export VAULT_ADDR="http://127.0.0.1:8200"

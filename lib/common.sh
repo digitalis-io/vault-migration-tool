@@ -42,7 +42,7 @@ success() { echo -e "\033[1;32m[+]\033[0m $(_ts) $*"; }
 # Initialise an error log file under INPUT_DIR. Call after setup_import_dir.
 setup_error_log() {
   ERROR_LOG="${INPUT_DIR}/import-errors.log"
-  : > "$ERROR_LOG"   # truncate / create
+  touch "$ERROR_LOG"   # create if missing, preserve existing content
 }
 
 # Append an error entry to the log file.

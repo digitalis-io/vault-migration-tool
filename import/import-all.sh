@@ -24,6 +24,10 @@ parse_import_args "$@"
 load_config "${CONFIG_FILE}"
 setup_import_dir
 
+# Truncate the error log at the start of a full import run
+ERROR_LOG="${INPUT_DIR}/import-errors.log"
+: > "$ERROR_LOG"
+
 SCRIPTS=(
   "${SCRIPT_DIR}/import-policies.sh"
   "${SCRIPT_DIR}/import-auth.sh"

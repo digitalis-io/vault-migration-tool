@@ -255,6 +255,7 @@ main() {
     # AppRole: restore original role_ids so applications keep working
     if [[ "$auth_type" == "approle" ]]; then
       _restore_approle_role_ids "auth/${mount_name}" "${mount_dir}/roles"
+      _restore_approle_role_ids "auth/${mount_name}" "${mount_dir}/role"
     fi
 
     # LDAP legacy map/* collections

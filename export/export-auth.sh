@@ -74,23 +74,28 @@ main() {
     # Vault versions and auth method types.
 
     # Roles (oidc/jwt/aws/gcp/azure/approle/kubernetes/github)
-    export_collection "auth/${local_mount%/}" "roles" "$mount_dir" \
-      || export_collection "auth/${local_mount%/}" "role" "$mount_dir" \
-      || true
+    # Try both plural and singular endpoints — some auth methods use "roles",
+    # others use "role". Export whichever succeeds (or both if they differ).
+    export_collection "auth/${local_mount%/}" "roles" "$mount_dir" || true
+    export_collection "auth/${local_mount%/}" "role" "$mount_dir" || true
 
     # AppRole: export role_id for each role so it can be preserved on import.
     # The role_id lives at a separate endpoint and is not included in the role config.
     local mount_type
     mount_type=$(echo "$auth_json" | jq -r --arg m "$local_mount" '.[$m].type')
-    if [[ "$mount_type" == "approle" && -d "${mount_dir}/roles" ]]; then
-      local role_file
-      for role_file in "${mount_dir}/roles/"*.json; do
-        [[ -f "$role_file" ]] || continue
-        local role_name
-        role_name=$(basename "$role_file" .json)
-        safe_read_to_file "auth/${local_mount%/}/role/${role_name}/role-id" \
-          "${mount_dir}/roles/${role_name}.role_id.json" \
-          || warn "  Could not read role_id for AppRole role: ${role_name}"
+    if [[ "$mount_type" == "approle" ]]; then
+      local roles_dir
+      for roles_dir in "${mount_dir}/roles" "${mount_dir}/role"; do
+        [[ -d "$roles_dir" ]] || continue
+        local role_file
+        for role_file in "${roles_dir}/"*.json; do
+          [[ -f "$role_file" ]] || continue
+          local role_name
+          role_name=$(basename "$role_file" .json)
+          safe_read_to_file "auth/${local_mount%/}/role/${role_name}/role-id" \
+            "${roles_dir}/${role_name}.role_id.json" \
+            || warn "  Could not read role_id for AppRole role: ${role_name}"
+        done
       done
     fi
 

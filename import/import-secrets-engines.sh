@@ -25,6 +25,7 @@ load_config "${CONFIG_FILE}"
 require_tools vault jq
 setup_import_dir
 
+setup_error_log
 ENGINES_DIR="${INPUT_DIR}/secrets-engines"
 
 # System mounts to skip
@@ -64,11 +65,13 @@ _import_collection() {
       continue
     fi
 
-    if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
       warn "  Failed to write: ${write_path}"
+      log_error "${write_path}" "${vault_err}"
     fi
   done
 }
@@ -102,10 +105,12 @@ _apply_tune() {
     return 0
   fi
 
-  if vault secrets tune "${args[@]}" "${mount_path}" >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(vault secrets tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
     info "  Applied tune to: ${mount_path}"
   else
     warn "  Failed to tune: ${mount_path}"
+    log_error "secrets tune ${mount_path}" "${vault_err}"
   fi
 }
 
@@ -124,10 +129,12 @@ _apply_config_file() {
     return 0
   fi
 
-  if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
     info "  Applied config: ${write_path}"
   else
     warn "  Failed to write config: ${write_path}"
+    log_error "${write_path}" "${vault_err}"
   fi
 }
 
@@ -191,11 +198,13 @@ main() {
           done <<< "$options"
         fi
 
-        if vault secrets enable "${enable_args[@]}" "${engine_type}" >/dev/null 2>&1; then
+        local vault_err
+        if vault_err=$(vault secrets enable "${enable_args[@]}" "${engine_type}" 2>&1 >/dev/null); then
           info "  Enabled secrets engine: ${mount_path}"
           IMPORT_COUNT=$((IMPORT_COUNT + 1))
         else
           error "  Failed to enable secrets engine: ${mount_path}"
+          log_error "secrets enable ${mount_path}" "${vault_err}"
           continue
         fi
       fi
@@ -204,12 +213,20 @@ main() {
     # Apply tune
     _apply_tune "$mount_path" "${mount_dir}/tune.json"
 
-    # Apply config files
+    # Apply config files — generic config for all engines
     _apply_config_file "${mount_name}/config" "${mount_dir}/config.json"
-    _apply_config_file "${mount_name}/config/urls" "${mount_dir}/config_urls.json"
-    _apply_config_file "${mount_name}/config/crl" "${mount_dir}/config_crl.json"
-    _apply_config_file "${mount_name}/config/root" "${mount_dir}/config_root.json"
-    _apply_config_file "${mount_name}/config/lease" "${mount_dir}/config_lease.json"
+
+    # Engine-specific config endpoints
+    case "$engine_type" in
+      pki)
+        _apply_config_file "${mount_name}/config/urls" "${mount_dir}/config_urls.json"
+        _apply_config_file "${mount_name}/config/crl" "${mount_dir}/config_crl.json"
+        ;;
+      aws|gcp)
+        _apply_config_file "${mount_name}/config/root" "${mount_dir}/config_root.json"
+        _apply_config_file "${mount_name}/config/lease" "${mount_dir}/config_lease.json"
+        ;;
+    esac
 
     # Import collections
     for collection in roles keys issuers static-roles; do

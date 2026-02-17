@@ -174,6 +174,7 @@ The `import-all.sh` orchestrator enforces this order automatically.
 | `VAULT_CACERT` | No | Path to a custom CA certificate file |
 | `MEDUSA_ADDR` | No | Override Vault address for medusa (defaults to `VAULT_ADDR`) |
 | `MEDUSA_INSECURE` | No | Set `"true"` to pass `--insecure` to medusa |
+| `USERPASS_TEMP_PASSWORD` | No | Temporary password for imported userpass users (default: `TEMPORARY-CHANGE-ME`) |
 
 ---
 
@@ -224,7 +225,7 @@ The export/import scripts handle sub-resources for these auth methods:
 | Method | Exported sub-resources |
 |--------|----------------------|
 | OIDC / JWT | roles, providers, keys, config |
-| AppRole | roles, config |
+| AppRole | roles, role_id (preserved on import), config |
 | LDAP | users, groups, config, legacy map/* |
 | Userpass | users |
 | GitHub | teams, users, config |
@@ -261,7 +262,7 @@ This tool exports and imports Vault **configuration** and **static secrets**. So
 
 ### Credentials That Cannot Be Exported
 
-**Userpass passwords** — Vault never exposes passwords. Users are imported with a temporary password (`TEMPORARY-CHANGE-ME`) and must reset it after migration.
+**Userpass passwords** — Vault never exposes passwords. Users are imported with a temporary password (default: `TEMPORARY-CHANGE-ME`) and must reset it after migration. Override with `USERPASS_TEMP_PASSWORD` environment variable.
 
 **AppRole secret IDs** — Secret IDs are one-time or ephemeral. Applications must generate new secret IDs after migration.
 
@@ -291,6 +292,19 @@ This tool exports and imports Vault **configuration** and **static secrets**. So
 - **Auth mount accessors** change when mounts are recreated on the destination
 - Policies or configurations referencing specific accessors will need to be updated
 - **Token roles** that reference accessor IDs must be manually adjusted
+
+### Read-Only and Computed Fields
+
+Some fields returned by `vault read` are rejected by `vault write`. The import scripts automatically strip these:
+
+- **AppRole `local_secret_ids`** — can only be set at role creation time; stripped from role payloads before import
+- **Kubernetes `alias_name_source`** — exported as an empty string by Vault but rejected on write (must be `serviceaccount_uid` or `serviceaccount_name`); stripped when empty
+
+If you encounter `400` errors during import for other auth methods, check the error log (`import-errors.log` in the input directory) — additional fields may need similar handling.
+
+### Import Error Log
+
+All import failures are recorded with the full Vault error message in `<input-dir>/import-errors.log`. Review this file after import to identify issues that need manual attention. The summary at the end of each import script reports the error count and log file location.
 
 ### Other Considerations
 

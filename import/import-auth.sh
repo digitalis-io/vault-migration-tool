@@ -23,7 +23,9 @@ load_config "${CONFIG_FILE}"
 require_tools vault jq
 setup_import_dir
 
+setup_error_log
 AUTH_DIR="${INPUT_DIR}/auth"
+USERPASS_TEMP_PASSWORD="${USERPASS_TEMP_PASSWORD:-TEMPORARY-CHANGE-ME}"
 
 # ── Import a single collection (roles, users, groups, etc.) ─────────────────
 _import_collection() {
@@ -37,6 +39,8 @@ _import_collection() {
   local file
   for file in "${col_dir}"/*.json; do
     [[ -f "$file" ]] || continue
+    # Skip role_id sidecar files (handled by _restore_approle_role_ids)
+    [[ "$file" == *.role_id.json ]] && continue
     local name
     name=$(basename "$file" .json)
     local write_path="${auth_path}/${collection}/${name}"
@@ -49,7 +53,21 @@ _import_collection() {
     # users, but passwords are not exported (Vault never exposes them).
     # We set a temporary password and warn the user to reset it.
     if [[ "$auth_type" == "userpass" && "$collection" == "users" ]]; then
-      payload=$(echo "$payload" | jq '. + {password: "TEMPORARY-CHANGE-ME"}')
+      payload=$(echo "$payload" | jq --arg pw "$USERPASS_TEMP_PASSWORD" '. + {password: $pw}')
+    fi
+
+    # AppRole roles: strip read-only fields that Vault rejects on write.
+    # local_secret_ids can only be set at role creation time and is not
+    # accepted as a parameter on the write endpoint.
+    if [[ "$auth_type" == "approle" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq 'del(.local_secret_ids)')
+    fi
+
+    # Kubernetes roles: strip alias_name_source if empty/invalid.
+    # Vault exports this field with an empty string but rejects it on write
+    # (must be "serviceaccount_uid" or "serviceaccount_name").
+    if [[ "$auth_type" == "kubernetes" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq 'if .alias_name_source == "" or .alias_name_source == null then del(.alias_name_source) else . end')
     fi
 
     if [[ "${DRY_RUN}" == "true" ]]; then
@@ -58,7 +76,8 @@ _import_collection() {
       continue
     fi
 
-    if echo "$payload" | vault write "${write_path}" - >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
       # Warn about temporary password for userpass users
@@ -67,6 +86,44 @@ _import_collection() {
       fi
     else
       warn "  Failed to write: ${write_path}"
+      log_error "${write_path}" "${vault_err}"
+    fi
+  done
+}
+
+# ── Restore AppRole role_ids ────────────────────────────────────────────────
+# After creating AppRole roles, restore the original role_id so that
+# applications using them continue to work without changes.
+_restore_approle_role_ids() {
+  local auth_path="$1"    # e.g., auth/approle-test
+  local roles_dir="$2"    # e.g., /path/to/auth/approle-test/roles
+
+  [[ -d "$roles_dir" ]] || return 0
+
+  local role_id_file
+  for role_id_file in "${roles_dir}"/*.role_id.json; do
+    [[ -f "$role_id_file" ]] || continue
+    local role_name
+    role_name=$(basename "$role_id_file" .role_id.json)
+    local original_role_id
+    original_role_id=$(jq -r '.data.role_id // .role_id // empty' "$role_id_file")
+
+    if [[ -z "$original_role_id" ]]; then
+      warn "  No role_id found in ${role_id_file}, skipping"
+      continue
+    fi
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      info "  [DRY-RUN] Would restore role_id for ${role_name}"
+      continue
+    fi
+
+    local vault_err
+    if vault_err=$(vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" 2>&1 >/dev/null); then
+      info "  Restored role_id for AppRole role: ${role_name}"
+    else
+      warn "  Failed to restore role_id for: ${role_name}"
+      log_error "${auth_path}/role/${role_name}/role-id" "${vault_err}"
     fi
   done
 }
@@ -101,10 +158,12 @@ _apply_tune() {
     return 0
   fi
 
-  if vault auth tune "${args[@]}" "${mount_path}" >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(vault auth tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
     info "  Applied tune to: ${mount_path}"
   else
     warn "  Failed to tune: ${mount_path}"
+    log_error "auth tune ${mount_path}" "${vault_err}"
   fi
 }
 
@@ -123,10 +182,12 @@ _apply_config() {
     return 0
   fi
 
-  if echo "$payload" | vault write "${auth_path}/config" - >/dev/null 2>&1; then
+  local vault_err
+  if vault_err=$(echo "$payload" | vault write "${auth_path}/config" - 2>&1 >/dev/null); then
     info "  Applied config to: ${auth_path}/config"
   else
     warn "  Failed to write config: ${auth_path}/config"
+    log_error "${auth_path}/config" "${vault_err}"
   fi
 }
 
@@ -177,11 +238,13 @@ main() {
       if [[ "${DRY_RUN}" == "true" ]]; then
         info "  [DRY-RUN] Would enable auth: ${auth_type} at ${mount_path}"
       else
-        if vault auth enable -path="${mount_name}" "${auth_type}" >/dev/null 2>&1; then
+        local vault_err
+        if vault_err=$(vault auth enable -path="${mount_name}" "${auth_type}" 2>&1 >/dev/null); then
           info "  Enabled auth mount: ${mount_path}"
           IMPORT_COUNT=$((IMPORT_COUNT + 1))
         else
           error "  Failed to enable auth mount: ${mount_path}"
+          log_error "auth enable ${mount_path}" "${vault_err}"
           continue
         fi
       fi
@@ -200,8 +263,11 @@ main() {
       if [[ "${DRY_RUN}" == "true" ]]; then
         info "  [DRY-RUN] Would write: auth/${mount_name}/config/client"
       else
-        echo "$payload" | vault write "auth/${mount_name}/config/client" - >/dev/null 2>&1 \
-          || warn "  Failed to write config/client for ${mount_path}"
+        local vault_err
+        if ! vault_err=$(echo "$payload" | vault write "auth/${mount_name}/config/client" - 2>&1 >/dev/null); then
+          warn "  Failed to write config/client for ${mount_path}"
+          log_error "auth/${mount_name}/config/client" "${vault_err}"
+        fi
       fi
     fi
 
@@ -209,6 +275,12 @@ main() {
     for collection in roles role users groups certs teams providers keys; do
       _import_collection "auth/${mount_name}" "$collection" "${mount_dir}/${collection}" "$auth_type"
     done
+
+    # AppRole: restore original role_ids so applications keep working
+    if [[ "$auth_type" == "approle" ]]; then
+      _restore_approle_role_ids "auth/${mount_name}" "${mount_dir}/roles"
+      _restore_approle_role_ids "auth/${mount_name}" "${mount_dir}/role"
+    fi
 
     # LDAP legacy map/* collections
     for collection in users groups roles; do

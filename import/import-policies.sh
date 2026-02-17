@@ -20,6 +20,7 @@ load_config "${CONFIG_FILE}"
 require_tools vault jq
 setup_import_dir
 
+setup_error_log
 POLICIES_DIR="${INPUT_DIR}/policies"
 
 # ── ACL Policies ─────────────────────────────────────────────────────────────
@@ -44,11 +45,13 @@ import_acl_policies() {
       continue
     fi
 
-    if vault policy write "$name" "$file" >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(vault policy write "$name" "$file" 2>&1 >/dev/null); then
       info "  Imported ACL policy: ${name}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
       warn "  Failed to write ACL policy: ${name}"
+      log_error "policy ${name}" "${vault_err}"
     fi
   done
 }
@@ -80,14 +83,16 @@ import_egp_policies() {
       continue
     fi
 
-    if vault write "sys/policies/egp/${name}" \
+    local vault_err
+    if vault_err=$(vault write "sys/policies/egp/${name}" \
         policy="${policy_b64}" \
         paths="${paths}" \
-        enforcement_level="${enforcement_level}" >/dev/null 2>&1; then
+        enforcement_level="${enforcement_level}" 2>&1 >/dev/null); then
       info "  Imported EGP policy: ${name}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
       warn "  Failed to write EGP policy: ${name}"
+      log_error "sys/policies/egp/${name}" "${vault_err}"
     fi
   done
 }
@@ -117,13 +122,15 @@ import_rgp_policies() {
       continue
     fi
 
-    if vault write "sys/policies/rgp/${name}" \
+    local vault_err
+    if vault_err=$(vault write "sys/policies/rgp/${name}" \
         policy="${policy_b64}" \
-        enforcement_level="${enforcement_level}" >/dev/null 2>&1; then
+        enforcement_level="${enforcement_level}" 2>&1 >/dev/null); then
       info "  Imported RGP policy: ${name}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
       warn "  Failed to write RGP policy: ${name}"
+      log_error "sys/policies/rgp/${name}" "${vault_err}"
     fi
   done
 }

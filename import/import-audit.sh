@@ -18,6 +18,7 @@ load_config "${CONFIG_FILE}"
 require_tools vault jq
 setup_import_dir
 
+setup_error_log
 AUDIT_DIR="${INPUT_DIR}/audit"
 
 main() {
@@ -80,11 +81,13 @@ main() {
       enable_args+=("$opt")
     done
 
-    if vault audit enable "${enable_args[@]}" >/dev/null 2>&1; then
+    local vault_err
+    if vault_err=$(vault audit enable "${enable_args[@]}" 2>&1 >/dev/null); then
       info "  Enabled audit device: ${clean} (type: ${device_type})"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
       warn "  Failed to enable audit device: ${clean}"
+      log_error "audit enable ${clean}" "${vault_err}"
     fi
   done <<< "$devices"
 

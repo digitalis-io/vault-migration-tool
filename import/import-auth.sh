@@ -71,6 +71,41 @@ _import_collection() {
   done
 }
 
+# ── Restore AppRole role_ids ────────────────────────────────────────────────
+# After creating AppRole roles, restore the original role_id so that
+# applications using them continue to work without changes.
+_restore_approle_role_ids() {
+  local auth_path="$1"    # e.g., auth/approle-test
+  local roles_dir="$2"    # e.g., /path/to/auth/approle-test/roles
+
+  [[ -d "$roles_dir" ]] || return 0
+
+  local role_id_file
+  for role_id_file in "${roles_dir}"/*.role_id.json; do
+    [[ -f "$role_id_file" ]] || continue
+    local role_name
+    role_name=$(basename "$role_id_file" .role_id.json)
+    local original_role_id
+    original_role_id=$(jq -r '.data.role_id // .role_id // empty' "$role_id_file")
+
+    if [[ -z "$original_role_id" ]]; then
+      warn "  No role_id found in ${role_id_file}, skipping"
+      continue
+    fi
+
+    if [[ "${DRY_RUN}" == "true" ]]; then
+      info "  [DRY-RUN] Would restore role_id for ${role_name}"
+      continue
+    fi
+
+    if vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" >/dev/null 2>&1; then
+      info "  Restored role_id for AppRole role: ${role_name}"
+    else
+      warn "  Failed to restore role_id for: ${role_name}"
+    fi
+  done
+}
+
 # ── Apply tune settings ─────────────────────────────────────────────────────
 _apply_tune() {
   local mount_path="$1"   # e.g., oidc/
@@ -209,6 +244,11 @@ main() {
     for collection in roles role users groups certs teams providers keys; do
       _import_collection "auth/${mount_name}" "$collection" "${mount_dir}/${collection}" "$auth_type"
     done
+
+    # AppRole: restore original role_ids so applications keep working
+    if [[ "$auth_type" == "approle" ]]; then
+      _restore_approle_role_ids "auth/${mount_name}" "${mount_dir}/roles"
+    fi
 
     # LDAP legacy map/* collections
     for collection in users groups roles; do

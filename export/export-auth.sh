@@ -93,6 +93,7 @@ main() {
           [[ "$role_file" == *.role_id.json ]] && continue
           local role_name
           role_name=$(basename "$role_file" .json)
+          info "Exporging AppRole role_id for role: ${role_name}"
           safe_read_to_file "auth/${local_mount%/}/role/${role_name}/role-id" \
             "${roles_dir}/${role_name}.role_id.json" \
             || warn "  Could not read role_id for AppRole role: ${role_name}"

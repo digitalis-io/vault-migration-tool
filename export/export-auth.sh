@@ -90,6 +90,7 @@ main() {
         local role_file
         for role_file in "${roles_dir}/"*.json; do
           [[ -f "$role_file" ]] || continue
+          [[ "$role_file" == *.role_id.json ]] && continue
           local role_name
           role_name=$(basename "$role_file" .json)
           safe_read_to_file "auth/${local_mount%/}/role/${role_name}/role-id" \

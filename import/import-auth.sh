@@ -70,6 +70,18 @@ _import_collection() {
       payload=$(echo "$payload" | jq 'if .alias_name_source == "" or .alias_name_source == null then del(.alias_name_source) else . end')
     fi
 
+    # GCP roles: strip read-only role_id and convert bound_labels from
+    # map {"k":"v"} to ["k:v"] strings. Vault exports bound_labels as a
+    # JSON object but expects an array of "key:value" strings on write.
+    if [[ "$auth_type" == "gcp" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq '
+        del(.role_id) |
+        if .bound_labels and (.bound_labels | type) == "object" then
+          .bound_labels = (.bound_labels | to_entries | map("\(.key):\(.value)"))
+        else . end
+      ')
+    fi
+
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write: ${write_path}"
       SKIP_COUNT=$((SKIP_COUNT + 1))
@@ -77,7 +89,7 @@ _import_collection() {
     fi
 
     local vault_err
-    if vault_err=$(echo "$payload" | vault write "${write_path}" - 2>&1 >/dev/null); then
+    if vault_err=$(echo "$payload" | vault_retry vault write "${write_path}" - 2>&1 >/dev/null); then
       info "  Imported: ${write_path}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
       # Warn about temporary password for userpass users
@@ -119,7 +131,7 @@ _restore_approle_role_ids() {
     fi
 
     local vault_err
-    if vault_err=$(vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" 2>&1 >/dev/null); then
+    if vault_err=$(vault_retry vault write "${auth_path}/role/${role_name}/role-id" role_id="${original_role_id}" 2>&1 >/dev/null); then
       info "  Restored role_id for AppRole role: ${role_name}"
     else
       warn "  Failed to restore role_id for: ${role_name}"
@@ -159,7 +171,7 @@ _apply_tune() {
   fi
 
   local vault_err
-  if vault_err=$(vault auth tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
+  if vault_err=$(vault_retry vault auth tune "${args[@]}" "${mount_path}" 2>&1 >/dev/null); then
     info "  Applied tune to: ${mount_path}"
   else
     warn "  Failed to tune: ${mount_path}"
@@ -183,7 +195,7 @@ _apply_config() {
   fi
 
   local vault_err
-  if vault_err=$(echo "$payload" | vault write "${auth_path}/config" - 2>&1 >/dev/null); then
+  if vault_err=$(echo "$payload" | vault_retry vault write "${auth_path}/config" - 2>&1 >/dev/null); then
     info "  Applied config to: ${auth_path}/config"
   else
     warn "  Failed to write config: ${auth_path}/config"
@@ -219,6 +231,15 @@ main() {
     # Skip underscore-prefixed files (like _auth_list.json directory wouldn't exist, but guard)
     [[ "$mount_name" == _* ]] && continue
 
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$mount_name" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     local mount_path="${mount_name}/"
     local mount_file="${mount_dir}/_mount.json"
 
@@ -239,7 +260,7 @@ main() {
         info "  [DRY-RUN] Would enable auth: ${auth_type} at ${mount_path}"
       else
         local vault_err
-        if vault_err=$(vault auth enable -path="${mount_name}" "${auth_type}" 2>&1 >/dev/null); then
+        if vault_err=$(vault_retry vault auth enable -path="${mount_name}" "${auth_type}" 2>&1 >/dev/null); then
           info "  Enabled auth mount: ${mount_path}"
           IMPORT_COUNT=$((IMPORT_COUNT + 1))
         else
@@ -264,7 +285,7 @@ main() {
         info "  [DRY-RUN] Would write: auth/${mount_name}/config/client"
       else
         local vault_err
-        if ! vault_err=$(echo "$payload" | vault write "auth/${mount_name}/config/client" - 2>&1 >/dev/null); then
+        if ! vault_err=$(echo "$payload" | vault_retry vault write "auth/${mount_name}/config/client" - 2>&1 >/dev/null); then
           warn "  Failed to write config/client for ${mount_path}"
           log_error "auth/${mount_name}/config/client" "${vault_err}"
         fi

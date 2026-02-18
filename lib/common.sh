@@ -5,11 +5,11 @@
 #
 # Provides:
 #   Logging:     info, warn, error, success
-#   Vault:       safe_list, safe_read_to_file, read_tune_to_file, export_collection
+#   Vault:       safe_list, safe_read_to_file, read_tune_to_file, export_collection, vault_retry
 #   Config:      load_config, require_tools
 #   Args:        parse_export_args, parse_import_args
 #   Safety:      confirm_action
-#   Globals:     DRY_RUN, CONFIG_FILE, OUTPUT_DIR, INPUT_DIR, AUTO_YES
+#   Globals:     DRY_RUN, CONFIG_FILE, OUTPUT_DIR, INPUT_DIR, AUTO_YES, FILTER_MOUNT
 
 # Guard against double-sourcing
 [[ -n "${_COMMON_SH_LOADED:-}" ]] && return 0
@@ -22,6 +22,7 @@ CONFIG_FILE=""
 OUTPUT_DIR=""
 INPUT_DIR=""
 CLUSTER_NAME="${CLUSTER_NAME:-}"
+FILTER_MOUNT=""
 
 # Counters (scripts can increment these, then call print_summary)
 EXPORT_COUNT=0
@@ -116,6 +117,8 @@ parse_export_args() {
         OUTPUT_DIR="$2"; shift 2 ;;
       --dry-run)
         DRY_RUN=true; shift ;;
+      --mount)
+        FILTER_MOUNT="$2"; shift 2 ;;
       --help|-h)
         _print_export_usage; exit 0 ;;
       *)
@@ -132,11 +135,12 @@ parse_export_args() {
 
 _print_export_usage() {
   cat <<'USAGE'
-Usage: <script> --config <config.env> [--output-dir <dir>] [--dry-run]
+Usage: <script> --config <config.env> [--output-dir <dir>] [--dry-run] [--mount <name>]
 
   --config <path>      Path to cluster .env config file (required)
   --output-dir <path>  Export output directory (default: data/<CLUSTER_NAME>)
   --dry-run            Log operations without making changes
+  --mount <name>       Only process this single mount (skip all others)
 USAGE
 }
 
@@ -153,6 +157,8 @@ parse_import_args() {
         DRY_RUN=true; shift ;;
       --yes|-y)
         AUTO_YES=true; shift ;;
+      --mount)
+        FILTER_MOUNT="$2"; shift 2 ;;
       --help|-h)
         _print_import_usage; exit 0 ;;
       *)
@@ -169,12 +175,13 @@ parse_import_args() {
 
 _print_import_usage() {
   cat <<'USAGE'
-Usage: <script> --config <config.env> [--input-dir <dir>] [--dry-run] [--yes]
+Usage: <script> --config <config.env> [--input-dir <dir>] [--dry-run] [--yes] [--mount <name>]
 
   --config <path>      Path to cluster .env config file (required)
   --input-dir <path>   Import input directory (default: data/<CLUSTER_NAME>)
   --dry-run            Log operations without making changes
   --yes                Skip interactive confirmation prompts
+  --mount <name>       Only process this single mount (skip all others)
 USAGE
 }
 
@@ -214,6 +221,55 @@ confirm_action() {
     [yY]|[yY][eE][sS]) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# ── Retry logic ──────────────────────────────────────────────────────────────
+VAULT_MAX_RETRIES="${VAULT_MAX_RETRIES:-5}"
+VAULT_RETRY_BASE_DELAY="${VAULT_RETRY_BASE_DELAY:-2}"  # seconds
+
+# Run a vault command with automatic retry on HTTP 429 (rate limit).
+# Usage: vault_retry vault write "path" - <<< "$payload"
+#        vault_retry vault auth enable -path="foo" "bar"
+# Returns the command's exit code. Stdout/stderr pass through on the final attempt.
+# On 429, retries up to VAULT_MAX_RETRIES times with exponential backoff.
+vault_retry() {
+  local attempt=0
+  local exit_code=0
+  local output=""
+
+  # Buffer stdin so it can be replayed on retries (needed for piped vault write)
+  local stdin_data=""
+  if [[ ! -t 0 ]]; then
+    stdin_data=$(cat)
+  fi
+
+  while true; do
+    if [[ -n "$stdin_data" ]]; then
+      output=$(echo "$stdin_data" | "$@" 2>&1) && exit_code=0 || exit_code=$?
+    else
+      output=$("$@" 2>&1) && exit_code=0 || exit_code=$?
+    fi
+
+    if [[ $exit_code -eq 0 ]]; then
+      echo "$output"
+      return 0
+    fi
+
+    # Check if the error is a 429 rate limit
+    if echo "$output" | grep -qi "429" && [[ $attempt -lt $VAULT_MAX_RETRIES ]]; then
+      attempt=$((attempt + 1))
+      local delay=$(( VAULT_RETRY_BASE_DELAY * (2 ** (attempt - 1)) ))
+      # Cap delay at 60 seconds
+      [[ $delay -gt 60 ]] && delay=60
+      warn "  Rate limited (429), retry ${attempt}/${VAULT_MAX_RETRIES} in ${delay}s..."
+      sleep "$delay"
+      continue
+    fi
+
+    # Not a 429 or retries exhausted — return the error
+    echo "$output" >&2
+    return $exit_code
+  done
 }
 
 # ── Vault CLI wrappers ───────────────────────────────────────────────────────

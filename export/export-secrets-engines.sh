@@ -62,6 +62,15 @@ main() {
       continue
     fi
 
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}/"
+      if [[ "$local_mount" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     local mount_dir="${ENGINES_DIR}/${local_mount}"
     mkdir -p "$mount_dir"
 

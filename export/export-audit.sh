@@ -4,7 +4,7 @@ set -euo pipefail
 # Export audit device configurations.
 #
 # Usage:
-#   ./export-audit.sh --config <config.env> [--output-dir <dir>] [--dry-run]
+#   ./export-audit.sh --config <config.env> [--output-dir <dir>] [--dry-run] [--mount <name>]
 #
 # Output structure:
 #   <output-dir>/audit/
@@ -38,6 +38,20 @@ main() {
     info "No audit devices enabled."
     print_summary "Audit export"
     return 0
+  fi
+
+  # Filter to a single device if --mount is set
+  if [[ -n "$FILTER_MOUNT" ]]; then
+    local filter_key="${FILTER_MOUNT%/}/"
+    if echo "$audit_json" | jq -e --arg d "$filter_key" 'has($d)' >/dev/null 2>&1; then
+      audit_json=$(echo "$audit_json" | jq --arg d "$filter_key" '{($d): .[$d]}')
+      count=1
+      info "Filtering to single audit device: ${FILTER_MOUNT}"
+    else
+      warn "Audit device not found: ${FILTER_MOUNT}"
+      print_summary "Audit export"
+      return 0
+    fi
   fi
 
   echo "$audit_json" | jq '.' > "${AUDIT_DIR}/_audit_devices.json"

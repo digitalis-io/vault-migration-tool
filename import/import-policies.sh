@@ -46,7 +46,7 @@ import_acl_policies() {
     fi
 
     local vault_err
-    if vault_err=$(vault policy write "$name" "$file" 2>&1 >/dev/null); then
+    if vault_err=$(vault_retry vault policy write "$name" "$file" 2>&1 >/dev/null); then
       info "  Imported ACL policy: ${name}"
       IMPORT_COUNT=$((IMPORT_COUNT + 1))
     else
@@ -84,7 +84,7 @@ import_egp_policies() {
     fi
 
     local vault_err
-    if vault_err=$(vault write "sys/policies/egp/${name}" \
+    if vault_err=$(vault_retry vault write "sys/policies/egp/${name}" \
         policy="${policy_b64}" \
         paths="${paths}" \
         enforcement_level="${enforcement_level}" 2>&1 >/dev/null); then
@@ -123,7 +123,7 @@ import_rgp_policies() {
     fi
 
     local vault_err
-    if vault_err=$(vault write "sys/policies/rgp/${name}" \
+    if vault_err=$(vault_retry vault write "sys/policies/rgp/${name}" \
         policy="${policy_b64}" \
         enforcement_level="${enforcement_level}" 2>&1 >/dev/null); then
       info "  Imported RGP policy: ${name}"

@@ -52,6 +52,15 @@ main() {
       continue
     fi
 
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}/"
+      if [[ "$local_mount" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     local mount_dir="${AUTH_DIR}/${local_mount}"
     mkdir -p "$mount_dir"
 
@@ -93,7 +102,6 @@ main() {
           [[ "$role_file" == *.role_id.json ]] && continue
           local role_name
           role_name=$(basename "$role_file" .json)
-          info "Exporging AppRole role_id for role: ${role_name}"
           safe_read_to_file "auth/${local_mount%/}/role/${role_name}/role-id" \
             "${roles_dir}/${role_name}.role_id.json" \
             || warn "  Could not read role_id for AppRole role: ${role_name}"

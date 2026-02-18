@@ -164,6 +164,15 @@ main() {
 
     [[ "$mount_name" == _* ]] && continue
 
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$mount_name" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     local mount_path="${mount_name}/"
 
     if _should_skip "$mount_path"; then

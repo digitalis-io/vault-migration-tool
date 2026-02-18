@@ -9,7 +9,7 @@
 #   Config:      load_config, require_tools
 #   Args:        parse_export_args, parse_import_args
 #   Safety:      confirm_action
-#   Globals:     DRY_RUN, CONFIG_FILE, OUTPUT_DIR, INPUT_DIR, AUTO_YES
+#   Globals:     DRY_RUN, CONFIG_FILE, OUTPUT_DIR, INPUT_DIR, AUTO_YES, FILTER_MOUNT
 
 # Guard against double-sourcing
 [[ -n "${_COMMON_SH_LOADED:-}" ]] && return 0
@@ -22,6 +22,7 @@ CONFIG_FILE=""
 OUTPUT_DIR=""
 INPUT_DIR=""
 CLUSTER_NAME="${CLUSTER_NAME:-}"
+FILTER_MOUNT=""
 
 # Counters (scripts can increment these, then call print_summary)
 EXPORT_COUNT=0
@@ -116,6 +117,8 @@ parse_export_args() {
         OUTPUT_DIR="$2"; shift 2 ;;
       --dry-run)
         DRY_RUN=true; shift ;;
+      --mount)
+        FILTER_MOUNT="$2"; shift 2 ;;
       --help|-h)
         _print_export_usage; exit 0 ;;
       *)
@@ -132,11 +135,12 @@ parse_export_args() {
 
 _print_export_usage() {
   cat <<'USAGE'
-Usage: <script> --config <config.env> [--output-dir <dir>] [--dry-run]
+Usage: <script> --config <config.env> [--output-dir <dir>] [--dry-run] [--mount <name>]
 
   --config <path>      Path to cluster .env config file (required)
   --output-dir <path>  Export output directory (default: data/<CLUSTER_NAME>)
   --dry-run            Log operations without making changes
+  --mount <name>       Only process this single mount (skip all others)
 USAGE
 }
 
@@ -153,6 +157,8 @@ parse_import_args() {
         DRY_RUN=true; shift ;;
       --yes|-y)
         AUTO_YES=true; shift ;;
+      --mount)
+        FILTER_MOUNT="$2"; shift 2 ;;
       --help|-h)
         _print_import_usage; exit 0 ;;
       *)
@@ -169,12 +175,13 @@ parse_import_args() {
 
 _print_import_usage() {
   cat <<'USAGE'
-Usage: <script> --config <config.env> [--input-dir <dir>] [--dry-run] [--yes]
+Usage: <script> --config <config.env> [--input-dir <dir>] [--dry-run] [--yes] [--mount <name>]
 
   --config <path>      Path to cluster .env config file (required)
   --input-dir <path>   Import input directory (default: data/<CLUSTER_NAME>)
   --dry-run            Log operations without making changes
   --yes                Skip interactive confirmation prompts
+  --mount <name>       Only process this single mount (skip all others)
 USAGE
 }
 

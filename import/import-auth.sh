@@ -70,11 +70,12 @@ _import_collection() {
       payload=$(echo "$payload" | jq 'if .alias_name_source == "" or .alias_name_source == null then del(.alias_name_source) else . end')
     fi
 
-    # GCP roles: convert bound_labels from map {"k":"v"} to ["k:v"] strings.
-    # Vault exports bound_labels as a JSON object but expects an array of
-    # "key:value" strings on write.
+    # GCP roles: strip read-only role_id and convert bound_labels from
+    # map {"k":"v"} to ["k:v"] strings. Vault exports bound_labels as a
+    # JSON object but expects an array of "key:value" strings on write.
     if [[ "$auth_type" == "gcp" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
       payload=$(echo "$payload" | jq '
+        del(.role_id) |
         if .bound_labels and (.bound_labels | type) == "object" then
           .bound_labels = (.bound_labels | to_entries | map("\(.key):\(.value)"))
         else . end
@@ -229,6 +230,15 @@ main() {
 
     # Skip underscore-prefixed files (like _auth_list.json directory wouldn't exist, but guard)
     [[ "$mount_name" == _* ]] && continue
+
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$mount_name" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
 
     local mount_path="${mount_name}/"
     local mount_file="${mount_dir}/_mount.json"

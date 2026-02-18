@@ -56,6 +56,15 @@ main() {
     # Reverse the filename sanitisation (underscores back to slashes)
     local mount_path="${filename//_//}"
 
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$mount_path" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     info "Importing KV mount: ${mount_path}"
 
     if [[ "${DRY_RUN}" == "true" ]]; then

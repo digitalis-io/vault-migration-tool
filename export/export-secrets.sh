@@ -59,6 +59,16 @@ main() {
 
   while read -r mount; do
     local local_mount="${mount%/}"
+
+    # Skip mounts that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$local_mount" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     # Sanitise mount path for filename (replace / with _)
     local safe_name="${local_mount//\//_}"
     local output_file="${SECRETS_DIR}/${safe_name}.json"

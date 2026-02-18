@@ -4,7 +4,7 @@ set -euo pipefail
 # Import audit device configurations.
 #
 # Usage:
-#   ./import-audit.sh --config <config.env> [--input-dir <dir>] [--dry-run] [--yes]
+#   ./import-audit.sh --config <config.env> [--input-dir <dir>] [--dry-run] [--yes] [--mount <name>]
 #
 # Reads from:
 #   <input-dir>/audit/
@@ -51,6 +51,16 @@ main() {
 
   while read -r device; do
     local clean="${device%/}"
+
+    # Skip devices that don't match the --mount filter
+    if [[ -n "$FILTER_MOUNT" ]]; then
+      local filter_clean="${FILTER_MOUNT%/}"
+      if [[ "$clean" != "$filter_clean" ]]; then
+        SKIP_COUNT=$((SKIP_COUNT + 1))
+        continue
+      fi
+    fi
+
     local device_type
     device_type=$(jq -r --arg d "$device" '.[$d].type' "$devices_file")
 

@@ -70,6 +70,17 @@ _import_collection() {
       payload=$(echo "$payload" | jq 'if .alias_name_source == "" or .alias_name_source == null then del(.alias_name_source) else . end')
     fi
 
+    # GCP roles: convert bound_labels from map {"k":"v"} to ["k:v"] strings.
+    # Vault exports bound_labels as a JSON object but expects an array of
+    # "key:value" strings on write.
+    if [[ "$auth_type" == "gcp" && ( "$collection" == "roles" || "$collection" == "role" ) ]]; then
+      payload=$(echo "$payload" | jq '
+        if .bound_labels and (.bound_labels | type) == "object" then
+          .bound_labels = (.bound_labels | to_entries | map("\(.key):\(.value)"))
+        else . end
+      ')
+    fi
+
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write: ${write_path}"
       SKIP_COUNT=$((SKIP_COUNT + 1))

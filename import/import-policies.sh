@@ -38,6 +38,8 @@ import_acl_policies() {
     [[ -f "$file" ]] || continue
     local name
     name=$(basename "$file" .hcl)
+    # Reverse filename sanitisation (slashes encoded as %2F)
+    name="${name//%2F//}"
 
     if [[ "${DRY_RUN}" == "true" ]]; then
       info "  [DRY-RUN] Would write ACL policy: ${name}"
@@ -70,6 +72,7 @@ import_egp_policies() {
     [[ -f "$file" ]] || continue
     local name
     name=$(basename "$file" .json)
+    name="${name//%2F//}"
 
     # Extract fields from exported JSON
     local enforcement_level paths policy_b64
@@ -111,6 +114,7 @@ import_rgp_policies() {
     [[ -f "$file" ]] || continue
     local name
     name=$(basename "$file" .json)
+    name="${name//%2F//}"
 
     local enforcement_level policy_b64
     enforcement_level=$(jq -r '.data.enforcement_level // "soft-mandatory"' "$file")

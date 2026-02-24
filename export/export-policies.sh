@@ -47,7 +47,9 @@ export_acl_policies() {
       continue
     fi
 
-    local file="${acl_dir}/${name}.hcl"
+    # Sanitise slashes in policy names for safe filenames
+    local safe_name="${name//\//%2F}"
+    local file="${acl_dir}/${safe_name}.hcl"
     if vault policy read "$name" > "$file" 2>/dev/null; then
       info "  Exported ACL policy: ${name}"
       EXPORT_COUNT=$((EXPORT_COUNT + 1))
@@ -73,7 +75,8 @@ export_egp_policies() {
   local name
   echo "$policies" | jq -r '.[]' | while read -r name; do
     local clean_name="${name%/}"
-    local file="${egp_dir}/${clean_name}.json"
+    local safe_name="${clean_name//\//%2F}"
+    local file="${egp_dir}/${safe_name}.json"
     if safe_read_to_file "sys/policies/egp/${clean_name}" "$file"; then
       info "  Exported EGP policy: ${clean_name}"
       EXPORT_COUNT=$((EXPORT_COUNT + 1))
@@ -99,7 +102,8 @@ export_rgp_policies() {
   local name
   echo "$policies" | jq -r '.[]' | while read -r name; do
     local clean_name="${name%/}"
-    local file="${rgp_dir}/${clean_name}.json"
+    local safe_name="${clean_name//\//%2F}"
+    local file="${rgp_dir}/${safe_name}.json"
     if safe_read_to_file "sys/policies/rgp/${clean_name}" "$file"; then
       info "  Exported RGP policy: ${clean_name}"
       EXPORT_COUNT=$((EXPORT_COUNT + 1))

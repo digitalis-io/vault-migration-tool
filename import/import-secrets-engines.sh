@@ -238,7 +238,7 @@ main() {
     esac
 
     # Import collections
-    for collection in roles keys issuers static-roles; do
+    for collection in roles rolesets keys issuers static-roles; do
       _import_collection "${mount_name}" "$collection" "${mount_dir}/${collection}"
     done
 

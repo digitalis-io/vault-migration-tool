@@ -116,12 +116,14 @@ main() {
     export_collection "${local_mount%/}" "static-roles" "$mount_dir" \
       || true
 
-    # AWS/GCP secrets: roles, config
+    # AWS/GCP secrets: roles, rolesets, config
     safe_read_to_file "${local_mount%/}/config/root" "${mount_dir}/config_root.json" \
       || true
     safe_read_to_file "${local_mount%/}/config/lease" "${mount_dir}/config_lease.json" \
       || true
     export_collection "${local_mount%/}" "roles" "$mount_dir" \
+      || true
+    export_collection "${local_mount%/}" "rolesets" "$mount_dir" \
       || true
 
   done

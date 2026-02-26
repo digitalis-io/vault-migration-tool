@@ -127,6 +127,7 @@ All scripts accept the following flags:
 --config <path>       Path to cluster .env config file (required)
 --output-dir <path>   Export output directory (default: data/<CLUSTER_NAME>)
 --input-dir <path>    Import input directory (default: data/<CLUSTER_NAME>)
+--mount <name>        Only process this single mount (skip all others)
 --dry-run             Log what would happen without making changes
 --yes                 Skip interactive confirmation (import scripts only)
 ```
@@ -142,6 +143,12 @@ All scripts accept the following flags:
 
 # Non-interactive import (for CI/CD pipelines)
 ./import/import-all.sh --config config/destination.env --yes
+
+# Export only the "approle" auth method
+./export/export-auth.sh --config config/source.env --mount approle
+
+# Import only the "kv" secrets engine
+./import/import-secrets-engines.sh --config config/destination.env --mount kv
 ```
 
 ---
@@ -175,6 +182,8 @@ The `import-all.sh` orchestrator enforces this order automatically.
 | `MEDUSA_ADDR` | No | Override Vault address for medusa (defaults to `VAULT_ADDR`) |
 | `MEDUSA_INSECURE` | No | Set `"true"` to pass `--insecure` to medusa |
 | `USERPASS_TEMP_PASSWORD` | No | Temporary password for imported userpass users (default: `TEMPORARY-CHANGE-ME`) |
+| `VAULT_MAX_RETRIES` | No | Max retry attempts for HTTP 429 rate limiting (default: `5`) |
+| `VAULT_RETRY_BASE_DELAY` | No | Base delay in seconds for exponential backoff on retries (default: `2`) |
 
 ---
 
@@ -215,6 +224,7 @@ data/<cluster-name>/
 - **Idempotent imports** — Scripts check if resources already exist before creating them (auth mounts, secrets engines, audit devices).
 - **No secrets in git** — `data/` and `config/*.env` are gitignored by default.
 - **Tool validation** — Scripts check for required tools (`vault`, `jq`, `medusa`) at startup and fail fast with a clear message.
+- **Rate-limit retries** — Vault API calls automatically retry on HTTP 429 with exponential backoff (configurable via `VAULT_MAX_RETRIES` and `VAULT_RETRY_BASE_DELAY`).
 
 ---
 
@@ -250,7 +260,7 @@ Engine mount definitions and configs are exported for all types. Additional sub-
 | Transit | keys |
 | SSH | roles |
 | Database | roles, static-roles, config |
-| AWS / GCP | roles, config/root, config/lease |
+| AWS / GCP | roles, rolesets, config/root, config/lease |
 
 System mounts (`sys/`, `identity/`, `cubbyhole/`) are automatically skipped.
 
@@ -299,6 +309,8 @@ Some fields returned by `vault read` are rejected by `vault write`. The import s
 
 - **AppRole `local_secret_ids`** — can only be set at role creation time; stripped from role payloads before import
 - **Kubernetes `alias_name_source`** — exported as an empty string by Vault but rejected on write (must be `serviceaccount_uid` or `serviceaccount_name`); stripped when empty
+- **GCP `role_id`** — read-only field returned by Vault; stripped from role payloads before import
+- **GCP `bound_labels`** — Vault exports this as a JSON object (`{"k":"v"}`) but expects an array of strings (`["k:v"]`) on write; automatically converted during import
 
 If you encounter `400` errors during import for other auth methods, check the error log (`import-errors.log` in the input directory) — additional fields may need similar handling.
 
